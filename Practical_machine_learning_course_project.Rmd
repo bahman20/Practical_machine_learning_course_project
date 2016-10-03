@@ -1,0 +1,123 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Bahman S"
+date: "September 25, 2016"
+output: html_document
+---
+
+## Introduction
+
+This document is the practical machine learning course project for the Coursera Data Sience specialization.  In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The goal of this project is to predict the manner in which they did the exercise. We describe how the model is built, how cross validation is used, and what is the expected out of sample error. We will also use our prediction model to predict 20 different test cases.
+
+## Loading the libraries and downloading the data
+
+We clear the global environment and load the required libraries.
+```{r}
+rm(list = ls())
+library(data.table)
+library(caret)
+library(ggplot2)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+```
+
+Here we download the data and load it to training and testing data frames. We also set seed.
+```{r}
+train_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+training <- fread(train_url)
+testing <- fread(test_url)
+set.seed(100)
+```
+## Cleaning the data
+
+We drop the variables that are entirely missing from both the test and training set, then we convert both sets to data frames.
+```{r}
+missing_training <- as.data.table(t(training[, lapply(.SD, function(x) sum(is.na(x) | x == "", na.rm = TRUE))]), keep.rownames = TRUE)
+table(missing_training$V1)
+
+missing <- missing_training[V1 != 0, rn]
+training <- training[, setdiff(names(training), missing), with = FALSE]
+testing <- testing[, setdiff(names(testing), missing), with = FALSE]
+
+training <- as.data.frame(training)
+testing <- as.data.frame(testing)
+```
+## Data partitioning
+
+We partition the training dataset to 70% training and 30% validate datasets.
+```{r}
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+training <- training[inTrain,]
+validate <- training[-inTrain,]
+```
+
+## Further cleaning the data
+Now we identify the near-zero variance variables. The outcome depends very little on these variables. 
+```{r}
+nsv <- nearZeroVar(training, saveMetrics = TRUE)
+nsv <- nsv[order(-nsv$freqRatio),]
+head(nsv)
+```
+"new_window" is the only variable with near-zero variance, so we remove it:
+```{r}
+training <- training[,setdiff(names(training),"new_window")]
+validate <- validate[,setdiff(names(validate), "new_window")]
+testing <- testing[,setdiff(names(testing), "new_window")]
+```
+We also remove unrelated variables V1 and "user_name", window and time stamp values:
+```{r}
+training <- training[, setdiff(names(training), c(grep("time|window", names(training), value = TRUE), "V1", "user_name"))]
+validate <- validate[, setdiff(names(validate), c(grep("time|window", names(validate), value = TRUE), "V1", "user_name"))]
+testing <- testing[, setdiff(names(testing), c(grep("time|window", names(testing), value = TRUE), "V1", "user_name"))]
+```
+## Modeling 
+
+We fix the class of data:
+```{r}
+training$classe <- as.factor(training$classe)
+validate$classe <- as.factor(validate$classe)
+```
+### Regression tree
+We create a model using rpart (regression tree), and plot it:
+```{r}
+treefit <- rpart(classe ~ ., data = training, method = "class")
+fancyRpartPlot(treefit)
+```
+And we "validate"" the model:
+```{r}
+treepredict <- predict(treefit, validate, type = "class")
+confusionMatrix(treepredict, validate$classe)
+```
+According to the above information, an accuracy of 0.743 is obtained using this model on the validate dataset.
+
+Now, we run the 20 test cases through the classification and regression tree:
+```{r}
+treeresult <- predict(treefit, testing[, setdiff(names(testing), c("problem_id"))], type = "class")
+treeresult
+```
+and we expect 74% of these predictions to be correct.
+
+
+### Random forest
+
+We develop a random forest model with 5-fold cross validation and 250 bootstrap samples: 
+```{r}
+rfcontrol <- trainControl(method = "cv", 5)
+rffit <- train(classe ~ ., data = training, method = "rf", trControl = rfcontrol, ntree = 250)
+rffit
+```
+and we "validate" the model on the validate dataset:
+```{r}
+rfpredict <- predict(rffit, validate)
+confusionMatrix(validate$classe, rfpredict)
+```
+
+The accuracy is unity, meaning that we have a very accurate model, better than the regression tree fit.
+Now, we run the 20 test cases through the random forest model:
+```{r}
+rfresult <- predict(rffit, testing[, setdiff(names(testing), c("problem_id"))])
+rfresult
+```
+We expect nearly all of these predictions to be correct.
